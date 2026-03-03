@@ -7,3 +7,16 @@ pub struct Cli {
     #[arg(long, short, default_value_t = 10000)]
     pub port: u16,
 }
+
+pub struct Client {
+    pub adress : String,
+    pub port : u16,
+    pub ticker : Vec<String>
+}
+
+impl Client {
+    
+    pub fn new() -> Self {
+        Self { adress: "127.0.0.1".to_string(), port: 9999, ticker: Vec::new() }
+    }
+}
