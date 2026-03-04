@@ -6,6 +6,8 @@ pub struct Cli {
     /// Server port
     #[arg(long, short, default_value_t = 10000)]
     pub port: u16,
+    #[arg(long, short)]
+    pub file_path : String
 }
 
 pub struct Client {

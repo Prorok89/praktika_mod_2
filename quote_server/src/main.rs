@@ -1,6 +1,9 @@
 use std::{
+    fs::File,
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
+    path::Path,
+    sync::{Arc, RwLock},
     thread,
 };
 
@@ -16,20 +19,28 @@ use url::Url;
 
 const CORRECT_COMMAND: &str = "correct command: STREAM udp://<host>:<post> <ticker1,ticker2>";
 
-fn main() -> Result<(), ()> {
+fn main() -> Result<(), ServerError> {
     let cli = Cli::parse();
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port)).unwrap();
     println!("Server listening on port {}", cli.port);
+
+    // Чтенеи файла с тикерами и запись в массив
+
+    let mut tickers: Vec<String> = Vec::new();
+
+    parse_file_tickers(&cli.file_path, &mut tickers)?;
+
+    let arc_tickers = Arc::new(RwLock::new(tickers));
 
     // let vault = Arc::new(Mutex::new(Vault::new(10))); // лимит 10 ячеек
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                // let vault = Arc::clone(&vault);
+                let arc_tickers_clone = Arc::clone(&arc_tickers);
                 thread::spawn(move || {
-                    if let Err(er) = handle_client(stream) {
+                    if let Err(er) = handle_client(stream, arc_tickers_clone) {
                         println!("{}", er);
                     }
                 });
@@ -41,7 +52,32 @@ fn main() -> Result<(), ()> {
     Ok(())
 }
 
-fn handle_client(stream: TcpStream) -> Result<(), ServerError> {
+fn parse_file_tickers(path: &str, tickers: &mut Vec<String>) -> Result<(), ServerError> {
+    let path = Path::new(path);
+
+    if path.exists() {
+        let mut file = File::open(path).map_err(ServerError::IoError)?;
+
+        let buf = BufReader::new(file);
+
+        for line in buf.lines() {
+            match line {
+                Ok(l) => {
+                    tickers.push(l);
+                }
+                Err(e) => {
+                    println!("{:?}", e);
+                }
+            }
+        }
+    } else {
+        println!("file not found: {:?}", path);
+    }
+
+    Ok(())
+}
+
+fn handle_client(stream: TcpStream, tickers: Arc<RwLock<Vec<String>>>) -> Result<(), ServerError> {
     let mut writer = stream.try_clone().expect("failed to clone stream");
     let mut reader = BufReader::new(stream);
 
@@ -57,6 +93,14 @@ fn handle_client(stream: TcpStream) -> Result<(), ServerError> {
                 return Err(ServerError::ConnectClosed);
             }
             Ok(_) => {
+                match tickers.read() {
+                    Ok(t) => {
+                        println!("t {:?}", t);
+                    }
+                    Err(e) => {
+                        println!("e {:?}", e);
+                    }
+                }
                 match parse_command(&line) {
                     Err(er) => {
                         _ = write!(writer, "{}\n", er);

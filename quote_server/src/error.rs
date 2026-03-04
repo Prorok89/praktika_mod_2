@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, io};
 
 #[derive(Debug)]
 pub enum ServerError {
@@ -6,6 +6,7 @@ pub enum ServerError {
     CommandFormat,
     ConnectClosed,
     ErrorNotKnow,
+    IoError(io::Error),
 }
 
 impl Display for ServerError{
@@ -15,6 +16,7 @@ impl Display for ServerError{
             ServerError::ConnectClosed => write!(f, "connection closed"),
             ServerError::ErrorNotKnow => write!(f, "error not know"),
             ServerError::SendServer { value } => write!(f, "{}",value),
+            ServerError::IoError(e) => write!(f, "error IO : {}", e),
         }
     }
 }
