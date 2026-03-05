@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
     path::Path,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     thread,
 };
 
@@ -28,25 +28,28 @@ fn main() -> Result<(), ServerError> {
     // Чтенеи файла с тикерами и запись в массив
 
     let mut tickers: Vec<String> = Vec::new();
+    let clients: Vec<Client> = Vec::new();
 
     parse_file_tickers(&cli.file_path, &mut tickers)?;
 
     let arc_tickers = Arc::new(RwLock::new(tickers));
-
+    let arc_clients = Arc::new(Mutex::new(clients));
     // let vault = Arc::new(Mutex::new(Vault::new(10))); // лимит 10 ячеек
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 let arc_tickers_clone = Arc::clone(&arc_tickers);
+                let arc_clients_clone = Arc::clone(&arc_clients);
                 thread::spawn(move || {
-                    if let Err(er) = handle_client(stream, arc_tickers_clone) {
+                    if let Err(er) = handle_client(stream, arc_tickers_clone, arc_clients_clone) {
                         println!("{}", er);
                     }
                 });
             }
             Err(e) => eprintln!("Connection failed: {}", e),
         }
+        println!("2 yes");
     }
 
     Ok(())
@@ -77,11 +80,15 @@ fn parse_file_tickers(path: &str, tickers: &mut Vec<String>) -> Result<(), Serve
     Ok(())
 }
 
-fn handle_client(stream: TcpStream, tickers: Arc<RwLock<Vec<String>>>) -> Result<(), ServerError> {
+fn handle_client(
+    stream: TcpStream,
+    tickers: Arc<RwLock<Vec<String>>>,
+    clients: Arc<Mutex<Vec<Client>>>,
+) -> Result<(), ServerError> {
     let mut writer = stream.try_clone().expect("failed to clone stream");
     let mut reader = BufReader::new(stream);
 
-    let _ = writer.write_all(b"Welcome to the Vault!\n");
+    let _ = writer.write_all(b"Welcome to the QuoteServer!\n");
     let _ = writer.flush();
 
     let mut line = String::new();
@@ -93,31 +100,28 @@ fn handle_client(stream: TcpStream, tickers: Arc<RwLock<Vec<String>>>) -> Result
                 return Err(ServerError::ConnectClosed);
             }
             Ok(_) => {
-                match tickers.read() {
-                    Ok(t) => {
-                        println!("t {:?}", t);
-                    }
-                    Err(e) => {
-                        println!("e {:?}", e);
-                    }
-                }
-                match parse_command(&line) {
-                    Err(er) => {
-                        _ = write!(writer, "{}\n", er);
-                        _ = writer.flush();
-                    }
-                    _ => println!("While I dont to do"),
-                }
-                println!("{}", line);
+                let client_create = parse_command(&line, &tickers, &clients).map_err(|er| {
+                    _ = write!(writer, "{}\n", er);
+                    _ = writer.flush();
+                });
+
+               if let Ok(_) = client_create {
+                    break;
+               }
             }
             Err(_) => {
                 return Err(ServerError::ConnectClosed);
             }
         }
-    }
+    };
+    Ok(())
 }
 
-fn parse_command(line: &str) -> Result<(), ServerError> {
+fn parse_command(
+    line: &str,
+    tickers: &Arc<RwLock<Vec<String>>>,
+    clients: &Arc<Mutex<Vec<Client>>>,
+) -> Result<bool, ServerError> {
     let iter: Vec<&str> = line.split_ascii_whitespace().collect();
 
     if iter.len() != 3 {
@@ -136,9 +140,37 @@ fn parse_command(line: &str) -> Result<(), ServerError> {
 
     validate_udp_address(iter[1], &mut client)?;
 
-    println!("port - {}, address - {}", client.port, client.adress);
+    let ticker_str = iter[2];
+    let ticker_list: Vec<&str> = ticker_str.split(",").collect();
 
-    Ok(())
+    if ticker_list.len() > 0 {
+        let ticker_data = tickers.read().map_err(|e| ServerError::SendServer {
+            value: format!("Failed to acquire read lock for tickers: {:?}", e),
+        })?;
+
+        for ticker in ticker_list {
+            if !ticker_data.contains(&ticker.to_string()) {
+                return Err(ServerError::TickerNotFound(ticker.to_string()));
+            }
+            client.ticker.push(ticker.to_string());
+        }
+    }
+
+    {
+        let mut data_clients = clients.lock().map_err(|er| ServerError::SendServer {
+            value: format!("Failed to acquire read lock for tickers: {:?}", er),
+        })?;
+        
+        for data_client in data_clients.iter() {
+            if *data_client == client {
+                return  Err(ServerError::SendServer { value: "A stream with these settings has already been launched".to_string() });
+            }
+        }
+        
+        data_clients.push(client);
+    }
+
+    Ok(true)
 }
 
 fn validate_udp_address(address: &str, client: &mut Client) -> Result<(), ServerError> {

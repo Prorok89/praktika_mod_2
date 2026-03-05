@@ -7,6 +7,7 @@ pub enum ServerError {
     ConnectClosed,
     ErrorNotKnow,
     IoError(io::Error),
+    TickerNotFound(String),
 }
 
 impl Display for ServerError{
@@ -17,6 +18,7 @@ impl Display for ServerError{
             ServerError::ErrorNotKnow => write!(f, "error not know"),
             ServerError::SendServer { value } => write!(f, "{}",value),
             ServerError::IoError(e) => write!(f, "error IO : {}", e),
+            ServerError::TickerNotFound(ticker) => write!(f, "Ticker not found: {}", ticker),
         }
     }
 }
