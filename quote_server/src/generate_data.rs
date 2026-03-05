@@ -11,6 +11,11 @@ pub struct StockQuote {
 
 // Методы для сериализации/десериализации
 impl StockQuote {
+
+    pub fn new(ticker: String) ->Self {
+        Self { ticker, price: 10.0, volume: 100, timestamp: 0 }
+    }
+
     pub fn to_string(&self) -> String {
         format!("{}|{}|{}|{}", self.ticker, self.price, self.volume, self.timestamp)
     }

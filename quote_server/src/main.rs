@@ -7,7 +7,7 @@ use std::{
     thread,
 };
 
-use crate::error::ServerError;
+use crate::{error::ServerError, generate_data::StockQuote};
 
 mod error;
 mod generate_data;
@@ -19,38 +19,59 @@ use url::Url;
 
 const CORRECT_COMMAND: &str = "correct command: STREAM udp://<host>:<post> <ticker1,ticker2>";
 
-fn main() -> Result<(), ServerError> {
+fn main() {
+    if let Err(e) = start_server() {
+        eprint!("{:?}", e);
+    }
+}
+
+fn start_server() -> Result<(), ServerError> {
     let cli = Cli::parse();
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port)).unwrap();
     println!("Server listening on port {}", cli.port);
 
-    // Чтенеи файла с тикерами и запись в массив
-
     let mut tickers: Vec<String> = Vec::new();
     let clients: Vec<Client> = Vec::new();
+    let stock_quote: Vec<StockQuote> = Vec::new();
 
     parse_file_tickers(&cli.file_path, &mut tickers)?;
 
     let arc_tickers = Arc::new(RwLock::new(tickers));
     let arc_clients = Arc::new(Mutex::new(clients));
-    // let vault = Arc::new(Mutex::new(Vault::new(10))); // лимит 10 ячеек
+    let arc_stock_quote = Arc::new(Mutex::new(stock_quote));
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
                 let arc_tickers_clone = Arc::clone(&arc_tickers);
                 let arc_clients_clone = Arc::clone(&arc_clients);
+                let arc_stock_quote_clone = Arc::clone(&arc_stock_quote);
                 thread::spawn(move || {
-                    if let Err(er) = handle_client(stream, arc_tickers_clone, arc_clients_clone) {
+                    if let Err(er) = handle_client(
+                        stream,
+                        arc_tickers_clone,
+                        arc_clients_clone,
+                        arc_stock_quote_clone,
+                    ) {
                         println!("{}", er);
                     }
                 });
             }
             Err(e) => eprintln!("Connection failed: {}", e),
         }
-        println!("2 yes");
     }
+
+    //  thread::spawn(move || {
+    //                 if let Err(er) = handle_client(
+    //                     stream,
+    //                     arc_tickers_clone,
+    //                     arc_clients_clone,
+    //                     arc_stock_quote_clone,
+    //                 ) {
+    //                     println!("{}", er);
+    //                 }
+    //             });
 
     Ok(())
 }
@@ -84,6 +105,7 @@ fn handle_client(
     stream: TcpStream,
     tickers: Arc<RwLock<Vec<String>>>,
     clients: Arc<Mutex<Vec<Client>>>,
+    stock_quote: Arc<Mutex<Vec<StockQuote>>>,
 ) -> Result<(), ServerError> {
     let mut writer = stream.try_clone().expect("failed to clone stream");
     let mut reader = BufReader::new(stream);
@@ -100,20 +122,21 @@ fn handle_client(
                 return Err(ServerError::ConnectClosed);
             }
             Ok(_) => {
-                let client_create = parse_command(&line, &tickers, &clients).map_err(|er| {
-                    _ = write!(writer, "{}\n", er);
-                    _ = writer.flush();
-                });
+                let client_create =
+                    parse_command(&line, &tickers, &clients, &stock_quote).map_err(|er| {
+                        _ = write!(writer, "{}\n", er);
+                        _ = writer.flush();
+                    });
 
-               if let Ok(_) = client_create {
+                if let Ok(_) = client_create {
                     break;
-               }
+                }
             }
             Err(_) => {
                 return Err(ServerError::ConnectClosed);
             }
         }
-    };
+    }
     Ok(())
 }
 
@@ -121,6 +144,7 @@ fn parse_command(
     line: &str,
     tickers: &Arc<RwLock<Vec<String>>>,
     clients: &Arc<Mutex<Vec<Client>>>,
+    stock_quote: &Arc<Mutex<Vec<StockQuote>>>,
 ) -> Result<bool, ServerError> {
     let iter: Vec<&str> = line.split_ascii_whitespace().collect();
 
@@ -148,11 +172,22 @@ fn parse_command(
             value: format!("Failed to acquire read lock for tickers: {:?}", e),
         })?;
 
+        let mut data_stock_quote = stock_quote.lock().map_err(|er| ServerError::SendServer {
+            value: format!("Failed to acquire read lock for stock_quote: {:?}", er),
+        })?;
+
         for ticker in ticker_list {
             if !ticker_data.contains(&ticker.to_string()) {
                 return Err(ServerError::TickerNotFound(ticker.to_string()));
             }
             client.ticker.push(ticker.to_string());
+
+            if !data_stock_quote
+                .iter()
+                .any(|sq| sq.ticker == ticker.to_string())
+            {
+                data_stock_quote.push(StockQuote::new(ticker.to_string()));
+            }
         }
     }
 
@@ -160,13 +195,15 @@ fn parse_command(
         let mut data_clients = clients.lock().map_err(|er| ServerError::SendServer {
             value: format!("Failed to acquire read lock for tickers: {:?}", er),
         })?;
-        
+
         for data_client in data_clients.iter() {
-            if *data_client == client {
-                return  Err(ServerError::SendServer { value: "A stream with these settings has already been launched".to_string() });
+            if data_client.adress == client.adress && data_client.port == client.port {
+                return Err(ServerError::SendServer {
+                    value: "A stream with these settings has already been launched".to_string(),
+                });
             }
         }
-        
+
         data_clients.push(client);
     }
 
