@@ -1,14 +1,14 @@
-use core::time;
 use std::{
     fs::File,
     io::{BufRead, BufReader, Write},
-    net::{TcpListener, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::Path,
     sync::{Arc, RwLock, mpsc},
     thread,
+    time::{Duration, Instant},
 };
 
-use crate::{error::ServerError, generate_data::StockQuote};
+use crate::{error::ServerError, generate_data::{StockQuote, QuoteGenerator}};
 
 mod error;
 mod generate_data;
@@ -18,7 +18,7 @@ use clap::Parser;
 use model::{Cli, Client};
 use url::Url;
 
-const CORRECT_COMMAND: &str = "correct command: STREAM udp://<host>:<post> <ticker1,ticker2>";
+const CORRECT_COMMAND: &str = "correct command: STREAM udp://<host>:<port> <ticker1,ticker2>";
 
 fn main() {
     if let Err(e) = start_server() {
@@ -29,7 +29,8 @@ fn main() {
 fn start_server() -> Result<(), ServerError> {
     let cli = Cli::parse();
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli.port)).unwrap();
+    let listener =
+        TcpListener::bind(format!("127.0.0.1:{}", cli.port)).map_err(ServerError::IoError)?;
     println!("Server listening on port {}", cli.port);
 
     let mut tickers: Vec<String> = Vec::new();
@@ -65,15 +66,33 @@ fn start_server() -> Result<(), ServerError> {
             Ok(stream) => {
                 let arc_tickers_clone = Arc::clone(&arc_tickers);
                 let arc_clients_clone = Arc::clone(&arc_clients);
+                let arc_clients_clone_wtite = Arc::clone(&arc_clients);
                 let sender_quote_clone = quote_sender.clone();
+                let stock_quote_receiver_clone = stock_quote_receiver.clone();
                 thread::spawn(move || {
-                    if let Err(er) = handle_client(
+                    match handle_client(
                         stream,
                         arc_tickers_clone,
                         arc_clients_clone,
                         sender_quote_clone,
                     ) {
-                        println!("{}", er);
+                        Err(er) => println!("{}", er),
+                        Ok(client) => match arc_clients_clone_wtite.write() {
+                            Err(e) => {
+                                ServerError::SendServer {
+                                    value: format!(
+                                        "Failed to acquire read lock for clients: {:?}",
+                                        e
+                                    ),
+                                };
+                            }
+                            Ok(mut data_clients) => {
+                                let client_clone = client.clone();
+
+                                thread::spawn(move || { create_udp_connect (client_clone)});
+                                data_clients.push(client);
+                            }
+                        },
                     }
                 });
             }
@@ -81,6 +100,15 @@ fn start_server() -> Result<(), ServerError> {
         }
     }
     println!("!");
+    Ok(())
+}
+
+fn create_udp_connect(client: Client) -> Result<(), ServerError>{
+    let listener = UdpSocket::bind(format!("{}:{}", client.adress, client.port))
+        .map_err(ServerError::IoError)?;
+    
+    listener.send_to(buf, addr)
+
     Ok(())
 }
 
@@ -137,7 +165,6 @@ fn process_quotes(
         println!("{:?}", data_stock_quote);
     }
 
-
     Ok(())
 }
 
@@ -171,7 +198,7 @@ fn handle_client(
     tickers: Arc<RwLock<Vec<String>>>,
     clients: Arc<RwLock<Vec<Client>>>,
     stock_quote: mpsc::Sender<String>,
-) -> Result<(), ServerError> {
+) -> Result<Client, ServerError> {
     let mut writer = stream.try_clone().expect("failed to clone stream");
     let mut reader = BufReader::new(stream);
 
@@ -187,14 +214,13 @@ fn handle_client(
                 return Err(ServerError::ConnectClosed);
             }
             Ok(_) => {
-                let client_create =
-                    parse_command(&line, &tickers, &clients, &stock_quote).map_err(|er| {
-                        _ = write!(writer, "{}\n", er);
-                        _ = writer.flush();
-                    });
+                let client = parse_command(&line, &tickers, &clients, &stock_quote).map_err(|er| {
+                    _ = write!(writer, "{}\n", er);
+                    _ = writer.flush();
+                });
 
-                if let Ok(_) = client_create {
-                    break;
+                if let Ok(client_ok) = client {
+                    return Ok(client_ok);
                 }
             }
             Err(_) => {
@@ -202,7 +228,6 @@ fn handle_client(
             }
         }
     }
-    Ok(())
 }
 
 fn parse_command(
@@ -210,7 +235,7 @@ fn parse_command(
     tickers: &Arc<RwLock<Vec<String>>>,
     clients: &Arc<RwLock<Vec<Client>>>,
     sender_quote: &mpsc::Sender<String>,
-) -> Result<bool, ServerError> {
+) -> Result<Client, ServerError> {
     let iter: Vec<&str> = line.split_ascii_whitespace().collect();
 
     if iter.len() != 3 {
@@ -248,7 +273,7 @@ fn parse_command(
     }
 
     {
-        let mut data_clients = clients.write().map_err(|er| ServerError::SendServer {
+        let mut data_clients = clients.read().map_err(|er| ServerError::SendServer {
             value: format!("Failed to acquire read lock for clients: {:?}", er),
         })?;
 
@@ -259,11 +284,9 @@ fn parse_command(
                 });
             }
         }
-
-        data_clients.push(client);
     }
 
-    Ok(true)
+    Ok(client)
 }
 
 fn validate_udp_address(address: &str, client: &mut Client) -> Result<(), ServerError> {

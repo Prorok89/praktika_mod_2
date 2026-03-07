@@ -10,7 +10,7 @@ pub struct Cli {
     pub file_path : String
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Client {
     pub adress : String,
     pub port : u16,
