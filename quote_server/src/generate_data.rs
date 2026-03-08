@@ -1,10 +1,14 @@
 use std::{
-    sync::{Arc, RwLock}, thread, time::{self, SystemTime, UNIX_EPOCH}
+    sync::{Arc, RwLock},
+    thread,
+    time::{self, Duration, SystemTime, UNIX_EPOCH},
 };
+
+use serde::{Deserialize, Serialize};
 
 use crate::{error::ServerError, model::Client};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StockQuote {
     pub ticker: String,
     pub price: f64,
@@ -14,12 +18,22 @@ pub struct StockQuote {
 
 // Методы для сериализации/десериализации
 impl StockQuote {
-    pub fn new(ticker: String) -> Self {
+    pub fn new(ticker: &str) -> Self {
+        let volume = match ticker {
+            "AAPL" | "MSFT" | "TSLA" => 1000 + (rand::random::<f64>() * 5000.0) as u32,
+            _ => 100 + (rand::random::<f64>() * 1000.0) as u32,
+        };
+
+        let last_price: f64 = 10.0;
+
         Self {
-            ticker,
-            price: 10.0,
-            volume: 100,
-            timestamp: 0,
+            ticker: ticker.to_string(),
+            price: last_price,
+            volume,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
         }
     }
 
@@ -56,52 +70,64 @@ impl StockQuote {
         bytes.extend_from_slice(self.timestamp.to_string().as_bytes());
         bytes
     }
+
+    pub fn update_data(&mut self) {
+        
+        if self.volume > 0 {
+            let quantity_coefficient: f64 = rand::random_range(0.7..1.1);
+            self.volume = (self.volume * ((quantity_coefficient * 100.0) as u32)) / 100;
+        }
+        else
+        {
+            let quantity_coefficient: u32 = rand::random_range(1000..2000);
+            self.volume = quantity_coefficient;
+        }
+        
+        if self.price > 0.0 {
+            let cost_coefficient: f64 = rand::random_range(0.9..1.1);
+            self.price = self.price * cost_coefficient;
+        }
+        else
+        {
+            self.price = 1.0;
+        }    
+    }
 }
 
 pub struct QuoteGenerator;
 
 impl QuoteGenerator {
-    pub fn generate_quote(&mut self, ticker: &str) -> Option<StockQuote> {
-        // ... логика изменения цены ...
-
-        let last_price: f64 = 10.0;
-
-        let volume = match ticker {
-            // Популярные акции имеют больший объём
-            "AAPL" | "MSFT" | "TSLA" => 1000 + (rand::random::<f64>() * 5000.0) as u32,
-            // Обычные акции - средний объём
-            _ => 100 + (rand::random::<f64>() * 1000.0) as u32,
-        };
-
-        Some(StockQuote {
-            ticker: ticker.to_string(),
-            price: last_price,
-            volume,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
-        })
-    }
-
     pub fn generate_multiple(
-        tickers: Arc<RwLock<Vec<String>>>,
+        stock_quote: Arc<RwLock<Vec<StockQuote>>>,
         clients: Arc<RwLock<Vec<Client>>>,
+        interval : Duration
     ) -> Result<(), ServerError> {
         loop {
-            let lock_clients = clients.read().map_err(|e| ServerError::SendServer {
-                value: format!("Failed to acquire read lock for stock_quote: {:?}", e),
-            })?;
+            let mut lock_stock_quotes =
+                stock_quote.write().map_err(|e| ServerError::SendServer {
+                    value: format!("Failed to acquire read lock for tickers: {:?}", e),
+                })?;
 
-            for client in lock_clients.iter() {
-                if let Some(cl) = &client.ts {
-                    cl.send(format!("test for address : {}", client.adress).to_string());
+            for stock_quote in lock_stock_quotes.iter_mut() {
+                stock_quote.update_data();
+
+                let lock_clients = clients.read().map_err(|e| ServerError::SendServer {
+                    value: format!("Failed to acquire read lock for clients: {:?}", e),
+                })?;
+                for client in lock_clients.iter() {
+                    // if client.alive && client.ticker.iter().any(|el| *el == stock_quote.ticker) {
+                    if client.ticker.iter().any(|el| *el == stock_quote.ticker) {
+                        if let Some(cl) = &client.ts {
+                            let str_stock_quote = serde_json::to_string(&stock_quote).map_err(|er| {
+                                ServerError::SendServer { value: format!("Error: StockQuote to json: {}", er) }
+                            })?;
+                            _ = cl.send(str_stock_quote);
+                        }
+                    }
                 }
             }
 
-            thread::sleep(time::Duration::from_secs(2));
+            thread::sleep(interval);
         }
-
-        Ok(())
     }
 }

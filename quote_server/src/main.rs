@@ -1,3 +1,4 @@
+use core::time;
 use std::{
     fs::File,
     io::{BufRead, BufReader, Write},
@@ -33,11 +34,13 @@ fn main() {
 }
 
 fn start_server() -> Result<(), ServerError> {
-    let cli = Cli::parse();
+    let cli: Cli = Cli::parse();
 
     let listener =
         TcpListener::bind(format!("127.0.0.1:{}", cli.port)).map_err(ServerError::IoError)?;
     println!("Server listening on port {}", cli.port);
+
+    let interval = cli.interval;
 
     let mut tickers: Vec<String> = Vec::new();
     let clients: Vec<Client> = Vec::new();
@@ -51,17 +54,17 @@ fn start_server() -> Result<(), ServerError> {
     let arc_clients: Arc<RwLock<Vec<Client>>> = Arc::new(RwLock::new(clients));
     let arc_stock_quote: Arc<RwLock<Vec<StockQuote>>> = Arc::new(RwLock::new(stock_quote));
 
-    let clone_stock_quote_to_process: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
-
-    let arc_tickers_clone: Arc<RwLock<Vec<String>>> = Arc::clone(&arc_tickers);
+    let arc_stock_quote_clone: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
     let arc_clients_clone: Arc<RwLock<Vec<Client>>> = Arc::clone(&arc_clients);
-    thread::spawn(move || QuoteGenerator::generate_multiple(arc_tickers_clone, arc_clients_clone));
+    thread::spawn(move || {
+        QuoteGenerator::generate_multiple(arc_stock_quote_clone, arc_clients_clone, time::Duration::from_secs(interval.into()))
+    });
 
+    let clone_stock_quote_to_process: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
     thread::spawn(move || {
         _ = process_quotes(quote_receiver, clone_stock_quote_to_process);
     });
 
-    // let clone_stock_quote_to_sending: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
     // let clone_clients_to_sending: Arc<RwLock<Vec<Client>>> = Arc::clone(&arc_clients);
 
     // thread::spawn(move || {
@@ -77,8 +80,8 @@ fn start_server() -> Result<(), ServerError> {
                 let arc_tickers_clone = Arc::clone(&arc_tickers);
                 let arc_clients_clone = Arc::clone(&arc_clients);
                 let arc_clients_clone_wtite = Arc::clone(&arc_clients);
-                let sender_quote_clone = quote_sender.clone();
 
+                let sender_quote_clone = quote_sender.clone();
                 thread::spawn(move || {
                     match handle_client(
                         stream,
@@ -118,54 +121,11 @@ fn create_udp_connect(address: String, tr: Receiver<String>) -> Result<(), Serve
     // Связываем сокет с локальным портом (127.0.0.1:0 - случайный свободный порт)
     let socket = UdpSocket::bind("127.0.0.1:0").map_err(ServerError::IoError)?;
 
-    // Парсим адрес получателя
-    let addr: SocketAddr = address.parse().map_err(|e| ServerError::SendServer {
-        value: format!("Invalid address format: {:?}", e),
-    })?;
-
-    println!("Sending to: {}", address);
-
     for quote in tr {
-        match socket.send_to(quote.as_bytes(), addr) {
-            Ok(bytes_sent) => println!("Sent {} bytes: {} to {}", bytes_sent, quote, address),
-            Err(e) => println!("Send error to {}: {}", address, e),
+        match socket.send_to(format!("{}\n", quote).as_bytes(), &address) {
+            Ok(bytes_sent) => println!("Sent {} bytes: {} to {} \n", bytes_sent, quote, address),
+            Err(e) => println!("Send error to {}: {}\n", address, e),
         }
-    }
-
-    Ok(())
-}
-
-fn sending_data_to_clients(
-    stock_quote: Arc<RwLock<Vec<StockQuote>>>,
-    clients: Arc<RwLock<Vec<Client>>>,
-) -> Result<(), ServerError> {
-    loop {
-        {
-            println!("Start");
-
-            println!("Satrt 1");
-            let data_clients = clients.read().map_err(|er| ServerError::SendServer {
-                value: format!("Failed to acquire read lock for clients: {:?}", er),
-            })?;
-            println!("Satrt 2");
-
-            if !data_clients.is_empty() {
-                let stock_quote_data = stock_quote.read().map_err(|e| {
-                    println!("Start 01: {:?}", e);
-                    ServerError::SendServer {
-                        value: format!("Failed to acquire read lock for stock_quote: {:?}", e),
-                    }
-                })?;
-
-                for data_client in data_clients.iter() {
-                    for q in stock_quote_data.iter() {
-                        println!("{} - {:?}", data_client.port, q);
-                    }
-                }
-            }
-            println!("End");
-        }
-        // thread::sleep(time::Duration::from_secs(2));
     }
 
     Ok(())
@@ -183,9 +143,8 @@ fn process_quotes(
             .iter()
             .any(|sq| sq.ticker == quote.to_string())
         {
-            data_stock_quote.push(StockQuote::new(quote.to_string()));
+            data_stock_quote.push(StockQuote::new(&quote));
         }
-        println!("{:?}", data_stock_quote);
     }
 
     Ok(())
@@ -291,7 +250,7 @@ fn parse_command(
             }
             client.ticker.push(ticker.to_string());
 
-            sender_quote.send(ticker.to_string());
+            _ = sender_quote.send(ticker.to_string());
         }
     }
 
