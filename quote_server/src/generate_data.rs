@@ -1,5 +1,8 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    sync::{Arc, RwLock}, thread, time::{self, SystemTime, UNIX_EPOCH}
+};
 
+use crate::{error::ServerError, model::Client};
 
 #[derive(Debug, Clone)]
 pub struct StockQuote {
@@ -11,13 +14,20 @@ pub struct StockQuote {
 
 // Методы для сериализации/десериализации
 impl StockQuote {
-
-    pub fn new(ticker: String) ->Self {
-        Self { ticker, price: 10.0, volume: 100, timestamp: 0 }
+    pub fn new(ticker: String) -> Self {
+        Self {
+            ticker,
+            price: 10.0,
+            volume: 100,
+            timestamp: 0,
+        }
     }
 
     pub fn to_string(&self) -> String {
-        format!("{}|{}|{}|{}", self.ticker, self.price, self.volume, self.timestamp)
+        format!(
+            "{}|{}|{}|{}",
+            self.ticker, self.price, self.volume, self.timestamp
+        )
     }
 
     pub fn from_string(s: &str) -> Option<Self> {
@@ -54,7 +64,7 @@ impl QuoteGenerator {
     pub fn generate_quote(&mut self, ticker: &str) -> Option<StockQuote> {
         // ... логика изменения цены ...
 
-        let last_price:f64 = 10.0;
+        let last_price: f64 = 10.0;
 
         let volume = match ticker {
             // Популярные акции имеют больший объём
@@ -67,19 +77,31 @@ impl QuoteGenerator {
             ticker: ticker.to_string(),
             price: last_price,
             volume,
-            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
         })
     }
 
-    pub fn generate_multiple(&mut self, tickers: Vec<&str>, count: u32) -> Vec<StockQuote> {
-        let mut quotes = Vec::new();
-        for _ in 0..count {
-            for ticker in &tickers {
-                if let Some(quote) = self.generate_quote(ticker) {
-                    quotes.push(quote);
+    pub fn generate_multiple(
+        tickers: Arc<RwLock<Vec<String>>>,
+        clients: Arc<RwLock<Vec<Client>>>,
+    ) -> Result<(), ServerError> {
+        loop {
+            let lock_clients = clients.read().map_err(|e| ServerError::SendServer {
+                value: format!("Failed to acquire read lock for stock_quote: {:?}", e),
+            })?;
+
+            for client in lock_clients.iter() {
+                if let Some(cl) = &client.ts {
+                    cl.send(format!("test for address : {}", client.adress).to_string());
                 }
             }
+
+            thread::sleep(time::Duration::from_secs(2));
         }
-        quotes
+
+        Ok(())
     }
 }

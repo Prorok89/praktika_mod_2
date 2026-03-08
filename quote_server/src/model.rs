@@ -1,3 +1,5 @@
+use std::sync::mpsc::Sender;
+
 use clap::{Parser, arg, command};
 
 #[derive(Parser, Debug)]
@@ -10,16 +12,17 @@ pub struct Cli {
     pub file_path : String
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct Client {
     pub adress : String,
     pub port : u16,
-    pub ticker : Vec<String>
+    pub ticker : Vec<String>,
+    pub ts : Option<Sender<String>>
 }
 
 impl Client {
     
     pub fn new() -> Self {
-        Self { adress: "127.0.0.1".to_string(), port: 9999, ticker: Vec::new() }
+        Self { adress: "127.0.0.1".to_string(), port: 9999, ticker: Vec::new(), ts : None }
     }
 }

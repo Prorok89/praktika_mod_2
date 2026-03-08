@@ -3,12 +3,18 @@ use std::{
     io::{BufRead, BufReader, Write},
     net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::Path,
-    sync::{Arc, RwLock, mpsc},
+    sync::{
+        Arc, RwLock,
+        mpsc::{self, Receiver},
+    },
     thread,
     time::{Duration, Instant},
 };
 
-use crate::{error::ServerError, generate_data::{StockQuote, QuoteGenerator}};
+use crate::{
+    error::ServerError,
+    generate_data::{QuoteGenerator, StockQuote},
+};
 
 mod error;
 mod generate_data;
@@ -47,19 +53,23 @@ fn start_server() -> Result<(), ServerError> {
 
     let clone_stock_quote_to_process: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
 
+    let arc_tickers_clone: Arc<RwLock<Vec<String>>> = Arc::clone(&arc_tickers);
+    let arc_clients_clone: Arc<RwLock<Vec<Client>>> = Arc::clone(&arc_clients);
+    thread::spawn(move || QuoteGenerator::generate_multiple(arc_tickers_clone, arc_clients_clone));
+
     thread::spawn(move || {
         _ = process_quotes(quote_receiver, clone_stock_quote_to_process);
     });
 
-    let clone_stock_quote_to_sending: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
-    let clone_clients_to_sending: Arc<RwLock<Vec<Client>>> = Arc::clone(&arc_clients);
+    // let clone_stock_quote_to_sending: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
+    // let clone_clients_to_sending: Arc<RwLock<Vec<Client>>> = Arc::clone(&arc_clients);
 
-    thread::spawn(move || {
-        _ = sending_data_to_clients(clone_stock_quote_to_sending, clone_clients_to_sending)
-            .map_err(|e| {
-                println!("{}", e);
-            });
-    });
+    // thread::spawn(move || {
+    //     _ = sending_data_to_clients(clone_stock_quote_to_sending, clone_clients_to_sending)
+    //         .map_err(|e| {
+    //             println!("{}", e);
+    //         });
+    // });
 
     for stream in listener.incoming() {
         match stream {
@@ -68,7 +78,7 @@ fn start_server() -> Result<(), ServerError> {
                 let arc_clients_clone = Arc::clone(&arc_clients);
                 let arc_clients_clone_wtite = Arc::clone(&arc_clients);
                 let sender_quote_clone = quote_sender.clone();
-                let stock_quote_receiver_clone = stock_quote_receiver.clone();
+
                 thread::spawn(move || {
                     match handle_client(
                         stream,
@@ -77,7 +87,7 @@ fn start_server() -> Result<(), ServerError> {
                         sender_quote_clone,
                     ) {
                         Err(er) => println!("{}", er),
-                        Ok(client) => match arc_clients_clone_wtite.write() {
+                        Ok(mut client) => match arc_clients_clone_wtite.write() {
                             Err(e) => {
                                 ServerError::SendServer {
                                     value: format!(
@@ -87,9 +97,10 @@ fn start_server() -> Result<(), ServerError> {
                                 };
                             }
                             Ok(mut data_clients) => {
-                                let client_clone = client.clone();
-
-                                thread::spawn(move || { create_udp_connect (client_clone)});
+                                let (ts, tr) = mpsc::channel::<String>();
+                                client.ts = Some(ts);
+                                let address = format!("{}:{}", client.adress, client.port);
+                                thread::spawn(move || create_udp_connect(address, tr));
                                 data_clients.push(client);
                             }
                         },
@@ -103,11 +114,23 @@ fn start_server() -> Result<(), ServerError> {
     Ok(())
 }
 
-fn create_udp_connect(client: Client) -> Result<(), ServerError>{
-    let listener = UdpSocket::bind(format!("{}:{}", client.adress, client.port))
-        .map_err(ServerError::IoError)?;
-    
-    listener.send_to(buf, addr)
+fn create_udp_connect(address: String, tr: Receiver<String>) -> Result<(), ServerError> {
+    // Связываем сокет с локальным портом (127.0.0.1:0 - случайный свободный порт)
+    let socket = UdpSocket::bind("127.0.0.1:0").map_err(ServerError::IoError)?;
+
+    // Парсим адрес получателя
+    let addr: SocketAddr = address.parse().map_err(|e| ServerError::SendServer {
+        value: format!("Invalid address format: {:?}", e),
+    })?;
+
+    println!("Sending to: {}", address);
+
+    for quote in tr {
+        match socket.send_to(quote.as_bytes(), addr) {
+            Ok(bytes_sent) => println!("Sent {} bytes: {} to {}", bytes_sent, quote, address),
+            Err(e) => println!("Send error to {}: {}", address, e),
+        }
+    }
 
     Ok(())
 }
@@ -142,7 +165,7 @@ fn sending_data_to_clients(
             }
             println!("End");
         }
-        thread::sleep(time::Duration::from_secs(2));
+        // thread::sleep(time::Duration::from_secs(2));
     }
 
     Ok(())
@@ -273,7 +296,7 @@ fn parse_command(
     }
 
     {
-        let mut data_clients = clients.read().map_err(|er| ServerError::SendServer {
+        let data_clients = clients.read().map_err(|er| ServerError::SendServer {
             value: format!("Failed to acquire read lock for clients: {:?}", er),
         })?;
 
