@@ -1,21 +1,17 @@
 use core::time;
 use std::{
-    fs::File,
     io::{BufRead, BufReader, Write},
-    net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
-    path::Path,
+    net::{TcpListener, TcpStream, UdpSocket},
     sync::{
         Arc, RwLock,
         mpsc::{self, Receiver},
     },
-    thread,
-    time::{Duration, Instant},
+    thread, time::Duration,
 };
 
-use crate::{
-    error::ServerError,
-    generate_data::{QuoteGenerator, StockQuote},
-};
+use crate::{error::ServerError, generate_data::QuoteGenerator};
+
+use common::model::StockQuote;
 
 mod error;
 mod generate_data;
@@ -42,11 +38,11 @@ fn start_server() -> Result<(), ServerError> {
 
     let interval = cli.interval;
 
-    let mut tickers: Vec<String> = Vec::new();
     let clients: Vec<Client> = Vec::new();
     let stock_quote: Vec<StockQuote> = Vec::new();
 
-    parse_file_tickers(&cli.file_path, &mut tickers)?;
+    let tickers: Vec<String> =
+        common::parse_file_tickers(&cli.file_path).map_err(ServerError::IoError)?;
 
     let (quote_sender, quote_receiver) = mpsc::channel::<String>();
 
@@ -57,7 +53,11 @@ fn start_server() -> Result<(), ServerError> {
     let arc_stock_quote_clone: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
     let arc_clients_clone: Arc<RwLock<Vec<Client>>> = Arc::clone(&arc_clients);
     thread::spawn(move || {
-        QuoteGenerator::generate_multiple(arc_stock_quote_clone, arc_clients_clone, time::Duration::from_secs(interval.into()))
+        QuoteGenerator::generate_multiple(
+            arc_stock_quote_clone,
+            arc_clients_clone,
+            time::Duration::from_secs(interval.into()),
+        )
     });
 
     let clone_stock_quote_to_process: Arc<RwLock<Vec<StockQuote>>> = Arc::clone(&arc_stock_quote);
@@ -128,6 +128,18 @@ fn create_udp_connect(address: String, tr: Receiver<String>) -> Result<(), Serve
         }
     }
 
+    thread::spawn(move || {
+
+        loop {
+            thread::sleep(Duration::from_secs(2));
+            
+            match socket.send_to(b"PING", &address) {
+                Ok(_) => println!("Sent PING to {}", address),
+                Err(e) => eprintln!("Failed to send PING: {}", e),
+            }
+        }
+    });
+
     Ok(())
 }
 
@@ -150,31 +162,6 @@ fn process_quotes(
     Ok(())
 }
 
-fn parse_file_tickers(path: &str, tickers: &mut Vec<String>) -> Result<(), ServerError> {
-    let path = Path::new(path);
-
-    if path.exists() {
-        let mut file = File::open(path).map_err(ServerError::IoError)?;
-
-        let buf = BufReader::new(file);
-
-        for line in buf.lines() {
-            match line {
-                Ok(l) => {
-                    tickers.push(l);
-                }
-                Err(e) => {
-                    println!("{:?}", e);
-                }
-            }
-        }
-    } else {
-        println!("file not found: {:?}", path);
-    }
-
-    Ok(())
-}
-
 fn handle_client(
     stream: TcpStream,
     tickers: Arc<RwLock<Vec<String>>>,
@@ -183,9 +170,6 @@ fn handle_client(
 ) -> Result<Client, ServerError> {
     let mut writer = stream.try_clone().expect("failed to clone stream");
     let mut reader = BufReader::new(stream);
-
-    let _ = writer.write_all(b"Welcome to the QuoteServer!\n");
-    let _ = writer.flush();
 
     let mut line = String::new();
 
@@ -202,6 +186,8 @@ fn handle_client(
                 });
 
                 if let Ok(client_ok) = client {
+                    _ = write!(writer, "OK");
+                    _ = writer.flush();
                     return Ok(client_ok);
                 }
             }
@@ -234,7 +220,10 @@ fn parse_command(
 
     let mut client: Client = Client::new();
 
-    validate_udp_address(iter[1], &mut client)?;
+    (client.adress, client.port) =
+        common::validate_udp_address(iter[1]).map_err(|e| ServerError::SendServer {
+            value: format!("{}", e),
+        })?;
 
     let ticker_str = iter[2];
     let ticker_list: Vec<&str> = ticker_str.split(",").collect();
@@ -269,51 +258,4 @@ fn parse_command(
     }
 
     Ok(client)
-}
-
-fn validate_udp_address(address: &str, client: &mut Client) -> Result<(), ServerError> {
-    if !address.starts_with("udp://") {
-        return Err(ServerError::SendServer {
-            value: "Invalid UDP address format. Expected: udp://<host>:<port>".to_string(),
-        });
-    }
-
-    match Url::parse(address) {
-        Ok(url) => {
-            if url.scheme() != "udp" {
-                return Err(ServerError::SendServer {
-                    value: "Invalid UDP address format. Scheme must be udp".to_string(),
-                });
-            }
-
-            match url.host() {
-                Some(host) => {
-                    client.adress = host.to_string();
-                }
-                None => {
-                    return Err(ServerError::SendServer {
-                        value: "Invalid UDP address format. Host is missing".to_string(),
-                    });
-                }
-            }
-
-            match url.port() {
-                Some(port) => {
-                    client.port = port;
-                }
-                None => {
-                    return Err(ServerError::SendServer {
-                        value: "Invalid UDP address format. Port is missing".to_string(),
-                    });
-                }
-            }
-
-            Ok(())
-        }
-        Err(_) => {
-            return Err(ServerError::SendServer {
-                value: "Invalid UDP address format. Cannot parse URL".to_string(),
-            });
-        }
-    }
 }

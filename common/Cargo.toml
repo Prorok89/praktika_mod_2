@@ -1,11 +1,11 @@
 [package]
-name = "quote_client"
+name = "common"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-common = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-clap = { workspace = true }
-ctrlc = { workspace = true }
+url = { workspace = true }
+chrono = { workspace = true }
+rand = "0.10"

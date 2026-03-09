@@ -2,8 +2,6 @@ use std::sync::mpsc::Sender;
 
 use clap::{Parser, arg, command};
 
-use crate::generate_data::StockQuote;
-
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
