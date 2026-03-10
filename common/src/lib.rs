@@ -11,6 +11,9 @@ use crate::error::CommonError;
 pub mod error;
 pub mod model;
 
+#[cfg(test)]
+mod test;
+
 pub fn parse_file_tickers(path: &str) -> Result<Vec<String>, io::Error> {
     let mut tickers: Vec<String> = Vec::new();
 

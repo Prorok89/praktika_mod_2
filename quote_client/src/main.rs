@@ -14,6 +14,7 @@ use crate::{error::ClientError, model::Cli};
 
 mod error;
 mod model;
+mod test;
 
 fn main() {
     env_logger::init();

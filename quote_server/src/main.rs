@@ -18,6 +18,7 @@ use common::model::StockQuote;
 mod error;
 mod generate_data;
 mod model;
+mod test;
 
 use clap::Parser;
 use model::{Cli, Client};
