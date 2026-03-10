@@ -1,4 +1,4 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{fmt::Display, time::{SystemTime, UNIX_EPOCH}};
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 
@@ -41,18 +41,26 @@ impl StockQuote {
 
         if self.price > 0.0 {
             let cost_coefficient: f64 = rand::random_range(0.9..1.1);
-            self.price = self.price * cost_coefficient;
+            self.price *= cost_coefficient;
         } else {
             self.price = 1.0;
         }
+
+        self.timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
     }
 
-    pub fn to_string(&self) -> String {
+}
+
+impl Display for StockQuote{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let date = match DateTime::from_timestamp((self.timestamp / 1000) as i64, 0) {
             Some(d) => d.format("%Y-%m-%d %H:%M:%S").to_string(),
             None => "".to_string()
         };
 
-        format!("{}\t{}\t{:<.5}\t{}", self.ticker, self.volume, self.price, date).to_string()
+        write!(f, "{}\t{}\t{:<.5}\t{}", self.ticker, self.volume, self.price, date)
     }
 }

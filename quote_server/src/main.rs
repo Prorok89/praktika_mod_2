@@ -4,9 +4,11 @@ use std::{
     net::{TcpListener, TcpStream, UdpSocket},
     sync::{
         Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver},
     },
-    thread, time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use crate::{error::ServerError, generate_data::QuoteGenerator};
@@ -19,13 +21,13 @@ mod model;
 
 use clap::Parser;
 use model::{Cli, Client};
-use url::Url;
 
 const CORRECT_COMMAND: &str = "correct command: STREAM udp://<host>:<port> <ticker1,ticker2>";
 
 fn main() {
+    env_logger::init();
     if let Err(e) = start_server() {
-        eprint!("{:?}", e);
+        log::error!("Server error: {:?}", e);
     }
 }
 
@@ -34,7 +36,7 @@ fn start_server() -> Result<(), ServerError> {
 
     let listener =
         TcpListener::bind(format!("127.0.0.1:{}", cli.port)).map_err(ServerError::IoError)?;
-    println!("Server listening on port {}", cli.port);
+    log::info!("Server listening on port {}", cli.port);
 
     let interval = cli.interval;
 
@@ -65,15 +67,6 @@ fn start_server() -> Result<(), ServerError> {
         _ = process_quotes(quote_receiver, clone_stock_quote_to_process);
     });
 
-    // let clone_clients_to_sending: Arc<RwLock<Vec<Client>>> = Arc::clone(&arc_clients);
-
-    // thread::spawn(move || {
-    //     _ = sending_data_to_clients(clone_stock_quote_to_sending, clone_clients_to_sending)
-    //         .map_err(|e| {
-    //             println!("{}", e);
-    //         });
-    // });
-
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
@@ -89,7 +82,7 @@ fn start_server() -> Result<(), ServerError> {
                         arc_clients_clone,
                         sender_quote_clone,
                     ) {
-                        Err(er) => println!("{}", er),
+                        Err(er) => log::error!("Client handler error: {}", er),
                         Ok(mut client) => match arc_clients_clone_wtite.write() {
                             Err(e) => {
                                 ServerError::SendServer {
@@ -110,10 +103,9 @@ fn start_server() -> Result<(), ServerError> {
                     }
                 });
             }
-            Err(e) => eprintln!("Connection failed: {}", e),
+            Err(e) => log::error!("Connection failed: {}", e),
         }
     }
-    println!("!");
     Ok(())
 }
 
@@ -121,24 +113,66 @@ fn create_udp_connect(address: String, tr: Receiver<String>) -> Result<(), Serve
     // Связываем сокет с локальным портом (127.0.0.1:0 - случайный свободный порт)
     let socket = UdpSocket::bind("127.0.0.1:0").map_err(ServerError::IoError)?;
 
-    for quote in tr {
-        match socket.send_to(format!("{}\n", quote).as_bytes(), &address) {
-            Ok(bytes_sent) => println!("Sent {} bytes: {} to {} \n", bytes_sent, quote, address),
-            Err(e) => println!("Send error to {}: {}\n", address, e),
-        }
-    }
+    let socket_clone = socket.try_clone().map_err(ServerError::IoError)?;
+    let addres_clone = address.clone();
+
+    let last_ping_time = Arc::new(std::sync::Mutex::new(Instant::now()));
+    let last_ping_clone = Arc::clone(&last_ping_time);
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
 
     thread::spawn(move || {
-
+        let timeout_duration = Duration::from_secs(10);
+        let timeout_duration_send = Duration::from_secs(1);
         loop {
             thread::sleep(Duration::from_secs(2));
-            
-            match socket.send_to(b"PING", &address) {
-                Ok(_) => println!("Sent PING to {}", address),
-                Err(e) => eprintln!("Failed to send PING: {}", e),
+
+            if let Ok(last_ping) = last_ping_clone.lock()
+                && last_ping.elapsed() > timeout_duration
+            {
+                r.store(false, Ordering::SeqCst);
+                break;
+            }
+
+            if let Err(e) = socket_clone.send_to(b"PING", &addres_clone) {
+                log::error!("Failed to send PING: {}", e)
+            }
+
+            let mut buf = [0; 1024];
+
+            loop {
+                match socket_clone.recv_from(&mut buf) {
+                    Ok((len, _)) => {
+                        let data = String::from_utf8_lossy(&buf[..len]);
+                        if data.trim() == "PONG" {
+                            let _ = last_ping_clone.lock().map(|mut lt| {
+                                *lt = Instant::now();
+                            });
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("UDP error: {}", e);
+                    }
+                }
+                if let Ok(last_ping) = last_ping_clone.lock()
+                    && last_ping.elapsed() > timeout_duration_send
+                {
+                    break;
+                }
             }
         }
     });
+
+    for quote in tr {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+
+        if let Err(e) = socket.send_to(format!("{}\n", quote).as_bytes(), &address) {
+            log::error!("Send error to {}: {}\n", address, e);
+        }
+    }
 
     Ok(())
 }
@@ -153,7 +187,7 @@ fn process_quotes(
         })?;
         if !data_stock_quote
             .iter()
-            .any(|sq| sq.ticker == quote.to_string())
+            .any(|sq| sq.ticker == *quote.as_str())
         {
             data_stock_quote.push(StockQuote::new(&quote));
         }
@@ -181,7 +215,7 @@ fn handle_client(
             }
             Ok(_) => {
                 let client = parse_command(&line, &tickers, &clients, &stock_quote).map_err(|er| {
-                    _ = write!(writer, "{}\n", er);
+                    _ = write!(writer, "ERR: {}\n", er);
                     _ = writer.flush();
                 });
 
@@ -228,7 +262,7 @@ fn parse_command(
     let ticker_str = iter[2];
     let ticker_list: Vec<&str> = ticker_str.split(",").collect();
 
-    if ticker_list.len() > 0 {
+    if !ticker_list.is_empty() {
         let ticker_data = tickers.read().map_err(|e| ServerError::SendServer {
             value: format!("Failed to acquire read lock for tickers: {:?}", e),
         })?;

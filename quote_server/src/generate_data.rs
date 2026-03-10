@@ -14,7 +14,7 @@ impl QuoteGenerator {
     pub fn generate_multiple(
         stock_quote: Arc<RwLock<Vec<StockQuote>>>,
         clients: Arc<RwLock<Vec<Client>>>,
-        interval : Duration
+        interval: Duration,
     ) -> Result<(), ServerError> {
         loop {
             let mut lock_stock_quotes =
@@ -30,13 +30,16 @@ impl QuoteGenerator {
                 })?;
                 for client in lock_clients.iter() {
                     // if client.alive && client.ticker.iter().any(|el| *el == stock_quote.ticker) {
-                    if client.ticker.iter().any(|el| *el == stock_quote.ticker) {
-                        if let Some(cl) = &client.ts {
-                            let str_stock_quote = serde_json::to_string(&stock_quote).map_err(|er| {
-                                ServerError::SendServer { value: format!("Error: StockQuote to json: {}", er) }
+                    if client.ticker.contains(&stock_quote.ticker)
+                        && let Some(cl) = &client.ts
+                    {
+                        let str_stock_quote =
+                            serde_json::to_string(&stock_quote).map_err(|er| {
+                                ServerError::SendServer {
+                                    value: format!("Error: StockQuote to json: {}", er),
+                                }
                             })?;
-                            _ = cl.send(str_stock_quote);
-                        }
+                        _ = cl.send(str_stock_quote);
                     }
                 }
             }

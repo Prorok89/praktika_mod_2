@@ -16,8 +16,9 @@ mod error;
 mod model;
 
 fn main() {
+    env_logger::init();
     if let Err(e) = start_client() {
-        eprint!("{:?}", e);
+        log::error!("Client error: {:?}", e);
     }
 }
 
@@ -27,7 +28,7 @@ fn start_client() -> Result<(), ClientError> {
     let tickers: Vec<String> =
         common::parse_file_tickers(&cli.file_path).map_err(ClientError::IoError)?;
 
-    let mut udp_port: u16 = cli.udp_port;
+    let udp_port: u16 = cli.udp_port;
 
     let address =
         common::validate_tcp_address(&cli.server_addr).map_err(|e| ClientError::SendServer {
@@ -80,13 +81,10 @@ fn start_client() -> Result<(), ClientError> {
         let mut buf = [0; 1024];
 
         while running.load(Ordering::SeqCst) {
-            
             match socket.recv_from(&mut buf) {
                 Ok((len, addr)) => {
                     let data = String::from_utf8_lossy(&buf[..len]);
-
-                    if data == "PING" {
-                        println!("PONG -> ");
+                    if data.trim() == "PING" {
                         socket
                             .send_to(b"PONG", addr)
                             .map_err(|er| ClientError::SendServer {
@@ -98,11 +96,11 @@ fn start_client() -> Result<(), ClientError> {
                                 value: er.to_string(),
                             }
                         })?;
-                        println!("{}", s.to_string());
+                        println!("{}", s.to_string())
                     }
                 }
                 Err(e) => {
-                    eprintln!("Ошибка UDP: {}", e);
+                    log::error!("UDP error: {}", e);
                 }
             }
         }

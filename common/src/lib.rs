@@ -18,10 +18,8 @@ pub fn parse_file_tickers(path: &str) -> Result<Vec<String>, io::Error> {
 
     let buf = BufReader::new(file);
 
-    for line in buf.lines() {
-        if let Ok(l) = line {
-            tickers.push(l);
-        }
+    for line in buf.lines().filter_map(Result::ok) {
+        tickers.push(line);
     }
 
     Ok(tickers)
@@ -34,9 +32,6 @@ pub fn validate_udp_address(address: &str) -> Result<(String, u16), CommonError>
         ));
     }
 
-    let mut res_host: String = String::new();
-    let mut res_port: u16 = 0;
-
     match Url::parse(address) {
         Ok(url) => {
             if url.scheme() != "udp" {
@@ -45,34 +40,30 @@ pub fn validate_udp_address(address: &str) -> Result<(String, u16), CommonError>
                 ));
             }
 
-            match url.host() {
-                Some(host) => {
-                    res_host = host.to_string();
-                }
+            let res_host = match url.host() {
+                Some(host) => host.to_string(),
                 None => {
                     return Err(CommonError::CommonError(
                         "Invalid UDP address format. Host is missing".to_string(),
                     ));
                 }
-            }
+            };
 
-            match url.port() {
-                Some(port) => {
-                    res_port = port;
-                }
+            let res_port = match url.port() {
+                Some(port) => port,
                 None => {
                     return Err(CommonError::CommonError(
                         "Invalid UDP address format. Port is missing".to_string(),
                     ));
                 }
-            }
+            };
 
             Ok((res_host, res_port))
         }
         Err(_) => {
-            return Err(CommonError::CommonError(
+            Err(CommonError::CommonError(
                 "Invalid UDP address format. Cannot parse URL".to_string(),
-            ));
+            ))
         }
     }
 }

@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug quote_server",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/quote_server.exe",
+            "args": [
+                "--port",
+                "12345",
+                "--interval",
+                "1",
+                "--file-path",
+                "quote_server/data/ticker.txt"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Debug quote_client",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/quote_client.exe",
+            "args": [
+                "--server-addr",
+                "127.0.0.1:12345",
+                "--udp-port",
+                "10001",
+                "--file-path",
+                "quote_client/data/test1.txt"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
