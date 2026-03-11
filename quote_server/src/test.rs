@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, RwLock};
+    use std::sync::{Arc, RwLock, atomic::AtomicBool};
     use clap::Parser;
     use crate::{Cli, Client, ServerError};
 
@@ -20,23 +20,14 @@ mod tests {
     }
 
     #[test]
-    fn test_client_new() {
-        let client = Client::new();
-        assert_eq!(client.adress, "127.0.0.1");
-        assert_eq!(client.port, 9999);
-        assert!(client.ticker.is_empty());
-        assert!(!client.alive);
-    }
-
-    #[test]
     fn test_client_clone() {
         let mut client = Client::new();
         client.ticker.push("AAPL".to_string());
-        client.alive = true;
+        client.alive = Arc::new(AtomicBool::new(true));
 
         let client_clone = client.clone();
         assert_eq!(client_clone.ticker, vec!["AAPL"]);
-        assert!(client_clone.alive);
+        assert!(client_clone.alive.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]

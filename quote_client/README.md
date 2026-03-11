@@ -10,8 +10,8 @@
 
 | Параметр | Описание | По умолчанию |
 |----------|----------|--------------|
-| `--server-addr, -s` | Адрес сервера | требуется |
-| `--udp-port, -u` | UDP порт для получения данных | 20000 |
+| `--tcp-server, -s` | Адрес TCP сервера | требуется |
+| `--udp-server, -u` | Адрес UDP сервера | требуется |
 | `--file-path, -f` | Путь к файлу с тикерами | требуется |
 
 ## Сборка
@@ -33,16 +33,16 @@ cargo test
 
 ```bash
 # Windows
-target\debug\quote_client.exe --server-addr 127.0.0.1:12345 --udp-port 10001 --file-path quote_client/data/test1.txt
+target\debug\quote_client.exe --tcp-server 127.0.0.1:12345 --udp-server udp://127.0.0.1:10001 --file-path quote_client/data/test1.txt
 
 # Linux/Mac
-./target/debug/quote_client --server-addr 127.0.0.1:12345 --udp-port 10001 --file-path quote_client/data/test1.txt
+./target/debug/quote_client --tcp-server 127.0.0.1:12345 --udp-server udp://127.0.0.1:10001 --file-path quote_client/data/test1.txt
 ```
 
 ### Запуск через cargo
 
 ```bash
-cargo run -- --server-addr 127.0.0.1:12345 --udp-port 10001 --file-path quote_client/data/test1.txt
+cargo run -- --tcp-server 127.0.0.1:12345 --udp-server udp://127.0.0.1:10001 --file-path quote_client/data/test1.txt
 ```
 
 ## Формат файла с тикерами
@@ -59,7 +59,7 @@ MSFT
 
 ```bash
 # Сначала запустите сервер
-quote_server.exe --port 12345 --interval 5 --file-path quote_server/data/ticker.txt
+quote_server.exe --port 12345 --interval 1 --file-path quote_server/data/ticker.txt
 ```
 
 ## Ошибки
@@ -73,7 +73,7 @@ quote_server.exe --port 12345 --interval 5 --file-path quote_server/data/ticker.
 ## Логирование
 
 ```bash
-RUST_LOG=info cargo run -- --server-addr 127.0.0.1:12345 --udp-port 10001 --file-path quote_client/data/test1.txt
+RUST_LOG=info cargo run -- --tcp-server 127.0.0.1:12345 --udp-server udp://127.0.0.1:10001 --file-path quote_client/data/test1.txt
 ```
 
 ## PING/PONG

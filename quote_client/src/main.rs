@@ -29,18 +29,21 @@ fn start_client() -> Result<(), ClientError> {
     let tickers: Vec<String> =
         common::parse_file_tickers(&cli.file_path).map_err(ClientError::IoError)?;
 
-    let udp_port: u16 = cli.udp_port;
-
-    let address =
-        common::validate_tcp_address(&cli.server_addr).map_err(|e| ClientError::SendServer {
+    let (udp_address, udp_port)  =
+        common::validate_udp_address(&cli.udp_server).map_err(|e| ClientError::SendServer {
             value: format!("{}", e),
         })?;
 
-    let mut stream = TcpStream::connect(&address).map_err(|e| ClientError::SendServer {
+    let tsp_address =
+        common::validate_tcp_address(&cli.tcp_server).map_err(|e| ClientError::SendServer {
+            value: format!("{}", e),
+        })?;
+
+    let mut stream = TcpStream::connect(&tsp_address).map_err(|e| ClientError::SendServer {
         value: e.to_string(),
     })?;
 
-    let command = format!("STREAM udp://127.0.0.1:{} {}", udp_port, tickers.join(","));
+    let command = format!("STREAM udp://{}:{} {}", udp_address, udp_port, tickers.join(","));
 
     stream
         .write_all(command.as_bytes())
@@ -63,7 +66,7 @@ fn start_client() -> Result<(), ClientError> {
         })?;
 
     if response == "OK" {
-        let socket = UdpSocket::bind(format!("127.0.0.1:{}", udp_port)).map_err(|er| {
+        let socket = UdpSocket::bind(format!("{}:{}", udp_address, udp_port)).map_err(|er| {
             ClientError::SendServer {
                 value: er.to_string(),
             }
@@ -97,7 +100,7 @@ fn start_client() -> Result<(), ClientError> {
                                 value: er.to_string(),
                             }
                         })?;
-                        println!("{}", s.to_string())
+                        println!("{}", s)
                     }
                 }
                 Err(e) => {

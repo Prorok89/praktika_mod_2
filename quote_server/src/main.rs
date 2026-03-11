@@ -96,8 +96,9 @@ fn start_server() -> Result<(), ServerError> {
                             Ok(mut data_clients) => {
                                 let (ts, tr) = mpsc::channel::<String>();
                                 client.ts = Some(ts);
-                                let address = format!("{}:{}", client.adress, client.port);
-                                thread::spawn(move || create_udp_connect(address, tr));
+                                let address = format!("{}:{}", client.address, client.port);
+                                let alive_clone = Arc::clone(&client.alive);
+                                thread::spawn(move || create_udp_connect(address, tr, alive_clone));
                                 data_clients.push(client);
                             }
                         },
@@ -110,9 +111,9 @@ fn start_server() -> Result<(), ServerError> {
     Ok(())
 }
 
-fn create_udp_connect(address: String, tr: Receiver<String>) -> Result<(), ServerError> {
+fn create_udp_connect(address: String, tr: Receiver<String>, alive : Arc<AtomicBool>) -> Result<(), ServerError> {
     // Связываем сокет с локальным портом (127.0.0.1:0 - случайный свободный порт)
-    let socket = UdpSocket::bind("127.0.0.1:0").map_err(ServerError::IoError)?;
+    let socket = UdpSocket::bind("0.0.0.0:0").map_err(ServerError::IoError)?;
 
     let socket_clone = socket.try_clone().map_err(ServerError::IoError)?;
     let addres_clone = address.clone();
@@ -132,6 +133,7 @@ fn create_udp_connect(address: String, tr: Receiver<String>) -> Result<(), Serve
                 && last_ping.elapsed() > timeout_duration
             {
                 r.store(false, Ordering::SeqCst);
+                alive.store(false, Ordering::SeqCst);
                 break;
             }
 
@@ -255,7 +257,7 @@ fn parse_command(
 
     let mut client: Client = Client::new();
 
-    (client.adress, client.port) =
+    (client.address, client.port) =
         common::validate_udp_address(iter[1]).map_err(|e| ServerError::SendServer {
             value: format!("{}", e),
         })?;
@@ -284,7 +286,7 @@ fn parse_command(
         })?;
 
         for data_client in data_clients.iter() {
-            if data_client.adress == client.adress && data_client.port == client.port {
+            if data_client.address == client.address && data_client.port == client.port {
                 return Err(ServerError::SendServer {
                     value: "A stream with these settings has already been launched".to_string(),
                 });

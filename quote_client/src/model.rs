@@ -5,9 +5,9 @@ use clap::{Parser};
 pub struct Cli {
     /// Server port
     #[arg(long, short)]
-    pub server_addr: String,
-    #[arg(long, short, default_value_t = 20000)]
-    pub udp_port: u16,
+    pub tcp_server: String,
+    #[arg(long, short)]
+    pub udp_server: String,
     #[arg(long, short)]
     pub file_path: String,
 }

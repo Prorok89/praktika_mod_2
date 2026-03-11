@@ -1,4 +1,4 @@
-use std::sync::mpsc::Sender;
+use std::sync::{Arc, atomic::AtomicBool, mpsc::Sender};
 
 use clap::{Parser};
 
@@ -16,21 +16,21 @@ pub struct Cli {
 
 #[derive(Debug, Clone)]
 pub struct Client {
-    pub adress: String,
+    pub address: String,
     pub port: u16,
     pub ticker: Vec<String>,
     pub ts: Option<Sender<String>>,
-    pub alive: bool,
+    pub alive: Arc<AtomicBool>,
 }
 
 impl Client {
     pub fn new() -> Self {
         Self {
-            adress: "127.0.0.1".to_string(),
+            address: String::new(),
             port: 9999,
             ticker: Vec::new(),
             ts: None,
-            alive : false,
+            alive : Arc::new(AtomicBool::new(true)),
         }
     }
 }
